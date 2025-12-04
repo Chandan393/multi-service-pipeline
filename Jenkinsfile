@@ -54,7 +54,6 @@ pipeline {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
                                         }
 
-                                        // ➤ Pick JAR from target/
                                         jar = sh(
                                             script: "find target -maxdepth 1 -name '*.jar' | head -1",
                                             returnStdout: true
@@ -64,9 +63,8 @@ pipeline {
                                     if (svc.type == "gradle") {
                                         sh "./gradlew clean build --quiet -PpipelineId=${RUN_ID}"
 
-                                        // ➤ Pick JAR from build/libs/
                                         jar = sh(
-                                            script: "find . -path '*/build/libs/*.jar' | head -1",
+                                            script: "find build/libs -maxdepth 1 -name '*.jar' | head -1",
                                             returnStdout: true
                                         ).trim()
                                     }
@@ -108,6 +106,38 @@ pipeline {
 
                                     echo "✔ Tests passed: ${svc.name}"
                                 }
+                            }
+                        }]
+                    }
+
+                    parallel branches
+                }
+            }
+        }
+
+        /* -------------------------------------------------------
+         *  NEW PARALLEL DEPLOYMENT STAGE (ADDED)
+         * ------------------------------------------------------- */
+        stage('Deploy Services') {
+            when {
+                expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
+            }
+            steps {
+                script {
+                    def branches = SERVICES.collectEntries { svc ->
+                        ["DEPLOY-${svc.name}": {
+                            node {
+
+                                echo "🚀 Deploying ${svc.name}"
+                                echo "Using JAR: ${JAR_PATHS[svc.name]}"
+
+                                // Replace this with your real deploy command
+                                sh """
+                                    echo 'Deploying ${svc.name}...'
+                                    echo 'Using artifact: ${JAR_PATHS[svc.name]}'
+                                """
+
+                                echo "✔ Deployment complete: ${svc.name}"
                             }
                         }]
                     }
