@@ -1,13 +1,12 @@
 def SERVICES = []
-def CHANGED_SERVICES = []
 def JAR_PATHS = [:]
+def CHANGED_SERVICES = []
 
 pipeline {
     agent any
 
     environment {
         RUN_ID = UUID.randomUUID().toString()
-        COMMITS_DIR = "${WORKSPACE}/.last_commits"
     }
 
     stages {
@@ -19,7 +18,6 @@ pipeline {
                 Run ID      : ${RUN_ID}
                 ==========================================================
                 """
-                sh "mkdir -p ${COMMITS_DIR}"
             }
         }
 
@@ -37,52 +35,48 @@ pipeline {
             }
         }
 
-        stage('Detect Changes') {
+        stage('Checkout Services') {
             steps {
                 script {
                     CHANGED_SERVICES = []
 
                     SERVICES.each { svc ->
-                        echo "Checking changes for ${svc.name}"
+                        echo "Checking changes for ${svc.name}..."
 
-                        // fresh clone
-                        sh """
-                            rm -rf tmp_${svc.name}
-                            git clone --depth 1 -b ${svc.branch} ${svc.repo} tmp_${svc.name}
-                        """
-
-                        // latest commit ID
-                        def latestCommit = sh(
-                            script: "cd tmp_${svc.name} && git rev-parse HEAD",
+                        def log = sh(
+                            script: """
+                                git ls-remote ${svc.repo} HEAD | awk '{print \$1}'
+                            """,
                             returnStdout: true
                         ).trim()
 
-                        def commitFile = "${COMMITS_DIR}/${svc.name}.txt"
-                        def lastCommit = fileExists(commitFile) ? readFile(commitFile).trim() : ""
-
-                        if (lastCommit != latestCommit) {
-                            echo "✔ Changes detected in ${svc.name}"
-                            CHANGED_SERVICES.add(svc)
-                        } else {
-                            echo "No changes in ${svc.name}"
+                        if (!svc.containsKey('last_commit')) {
+                            svc.last_commit = "unknown"
                         }
 
-                        // Save new commit
-                        writeFile(file: commitFile, text: latestCommit)
+                        if (svc.last_commit != log) {
+                            echo "🔄 CHANGED: ${svc.name}"
+                            svc.changed = true
+                            svc.last_commit = log
+                            CHANGED_SERVICES << svc
+                        } else {
+                            svc.changed = false
+                            echo "✔ NO CHANGE: ${svc.name}"
+                        }
                     }
 
-                    echo "Changed Services: ${CHANGED_SERVICES*.name}"
-
-                    // STOP PIPELINE IF NO CHANGES
-                    if (CHANGED_SERVICES.isEmpty()) {
-                        echo "No service changed → Skipping build/test/deploy → SUCCESS"
-                        currentBuild.result = "SUCCESS"
-                        return
-                    }
+                    echo """
+================ SERVICES WITH CHANGES ================
+${CHANGED_SERVICES*.name}
+=======================================================
+"""
                 }
             }
         }
 
+        /* ----------------------------------------------------
+         * UPDATED BUILD BLOCK (Fix: No nested clone folders)
+         * ---------------------------------------------------- */
         stage('Build Services') {
             when {
                 expression { CHANGED_SERVICES.size() > 0 }
@@ -90,25 +84,27 @@ pipeline {
             steps {
                 script {
 
-                    JAR_PATHS = [:]  // reset
+                    JAR_PATHS = [:]
 
                     def branches = CHANGED_SERVICES.collectEntries { svc ->
                         ["BUILD-${svc.name}": {
                             node {
+
+                                // CLEAN PREVIOUS FOLDER + CLONE OUTSIDE
+                                sh "rm -rf build_${svc.name}"
+                                sh "git clone -b ${svc.branch} ${svc.repo} build_${svc.name}"
+
+                                // ENTER CORRECT DIRECTORY
                                 dir("build_${svc.name}") {
 
-                                    // fresh clone for actual build
-                                    sh "rm -rf build_${svc.name}"
-                                    sh "git clone -b ${svc.branch} ${svc.repo} build_${svc.name}"
-
                                     echo "▶ Building ${svc.name}"
-
                                     def jar = ""
 
                                     if (svc.type == "maven") {
                                         withMaven(maven: 'Maven-3.9.11') {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
                                         }
+
                                         jar = sh(
                                             script: "find target -maxdepth 1 -name '*.jar' | head -1",
                                             returnStdout: true
@@ -116,7 +112,9 @@ pipeline {
                                     }
 
                                     if (svc.type == "gradle") {
+                                        sh "chmod +x gradlew"
                                         sh "./gradlew clean build --quiet -PpipelineId=${RUN_ID}"
+
                                         jar = sh(
                                             script: "find . -path '*/build/libs/*.jar' | head -1",
                                             returnStdout: true
@@ -124,6 +122,7 @@ pipeline {
                                     }
 
                                     JAR_PATHS[svc.name] = jar
+
                                     echo "✔ Build complete: ${svc.name}"
                                 }
                             }
@@ -141,10 +140,12 @@ pipeline {
             }
             steps {
                 script {
+
                     def branches = CHANGED_SERVICES.collectEntries { svc ->
                         ["TEST-${svc.name}": {
                             node {
                                 dir("build_${svc.name}") {
+
                                     echo "▶ Testing ${svc.name}"
 
                                     if (svc.type == "maven") {
@@ -174,12 +175,15 @@ pipeline {
             }
             steps {
                 script {
+
                     def branches = CHANGED_SERVICES.collectEntries { svc ->
                         ["DEPLOY-${svc.name}": {
                             node {
+
                                 echo "🚀 Deploying ${svc.name}"
                                 echo "Using JAR: ${JAR_PATHS[svc.name]}"
 
+                                // deployment placeholder
                                 sh """
                                     echo 'Deploying ${svc.name}...'
                                     echo 'Using artifact: ${JAR_PATHS[svc.name]}'
