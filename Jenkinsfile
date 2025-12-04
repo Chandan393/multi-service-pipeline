@@ -37,9 +37,6 @@ pipeline {
             }
         }
 
-        /* --------------------------------------------------------
-         * UPDATED DETECT CHANGES BLOCK (PERSISTENT last_commits)
-         * -------------------------------------------------------- */
         stage('Checkout Services') {
             steps {
                 script {
@@ -51,15 +48,11 @@ pipeline {
 
                         echo "Checking changes for ${svc.name}..."
 
-                        // File where we store last commit
                         def commitFile = "${COMMITS_DIR}/${svc.name}.txt"
-
-                        // Previously saved SHA
                         def lastCommit = fileExists(commitFile)
                                 ? readFile(commitFile).trim()
                                 : ""
 
-                        // Get latest SHA from remote
                         def latestCommit = sh(
                             script: "git ls-remote ${svc.repo} ${svc.branch} | awk '{print \$1}'",
                             returnStdout: true
@@ -76,7 +69,6 @@ pipeline {
                             echo "✔ NO CHANGE: ${svc.name}"
                         }
 
-                        // Save new commit hash
                         writeFile file: commitFile, text: latestCommit
                     }
 
@@ -89,12 +81,18 @@ ${CHANGED_SERVICES*.name}
             }
         }
 
-        /* ----------------------------------------------------
-         * UPDATED BUILD BLOCK (Fix: No nested clone folders)
-         * ---------------------------------------------------- */
+        /* --------------------------
+         * BUILD ONLY IF CHANGED
+         * -------------------------- */
         stage('Build Services') {
             when {
-                expression { CHANGED_SERVICES.size() > 0 }
+                expression {
+                    def changed = CHANGED_SERVICES.size() > 0
+                    if (!changed) {
+                        echo "⏭ SKIPPING BUILD: No changed services detected."
+                    }
+                    return changed
+                }
             }
             steps {
                 script {
@@ -147,9 +145,18 @@ ${CHANGED_SERVICES*.name}
             }
         }
 
+        /* --------------------------
+         * TEST ONLY IF CHANGED
+         * -------------------------- */
         stage('Test Services') {
             when {
-                expression { CHANGED_SERVICES.size() > 0 }
+                expression {
+                    def changed = CHANGED_SERVICES.size() > 0
+                    if (!changed) {
+                        echo "⏭ SKIPPING TESTS: No changed services detected."
+                    }
+                    return changed
+                }
             }
             steps {
                 script {
@@ -182,9 +189,18 @@ ${CHANGED_SERVICES*.name}
             }
         }
 
+        /* --------------------------
+         * DEPLOY ONLY IF CHANGED
+         * -------------------------- */
         stage('Deploy Services') {
             when {
-                expression { CHANGED_SERVICES.size() > 0 }
+                expression {
+                    def changed = CHANGED_SERVICES.size() > 0
+                    if (!changed) {
+                        echo "⏭ SKIPPING DEPLOY: No changed services detected."
+                    }
+                    return changed
+                }
             }
             steps {
                 script {
@@ -196,7 +212,6 @@ ${CHANGED_SERVICES*.name}
                                 echo "🚀 Deploying ${svc.name}"
                                 echo "Using JAR: ${JAR_PATHS[svc.name]}"
 
-                                // dummy deploy
                                 sh """
                                     echo 'Deploying ${svc.name}...'
                                     echo 'Using artifact: ${JAR_PATHS[svc.name]}'
@@ -214,7 +229,13 @@ ${CHANGED_SERVICES*.name}
 
         stage('Artifacts Summary') {
             when {
-                expression { CHANGED_SERVICES.size() > 0 }
+                expression {
+                    def changed = CHANGED_SERVICES.size() > 0
+                    if (!changed) {
+                        echo "⏭ SKIPPING ARTIFACT SUMMARY: No artifacts because no changes detected."
+                    }
+                    return changed
+                }
             }
             steps {
                 echo """
@@ -227,7 +248,7 @@ ${JAR_PATHS.collect { svc, jar -> "• ${svc} → ${jar}" }.join("\n")}
             }
         }
 
-    } // stages
+    }
 
     post {
         always {
