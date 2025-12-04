@@ -48,7 +48,7 @@ pipeline {
                                     echo "▶ Building ${svc.name}"
 
                                     if (svc.type == "maven") {
-                                        withMaven(maven: 'Maven-3.9.9') {
+                                        withMaven(maven: 'Maven-3.9.11') {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
                                         }
                                     }
@@ -88,7 +88,7 @@ pipeline {
                                     echo "▶ Testing ${svc.name}"
 
                                     if (svc.type == "maven") {
-                                        withMaven(maven: 'Maven-3.9.9') {
+                                        withMaven(maven: 'Maven-3.9.11') {
                                             sh "mvn -q test -Dpipeline.id=${RUN_ID}"
                                         }
                                     }
