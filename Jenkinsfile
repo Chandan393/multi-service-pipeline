@@ -66,7 +66,7 @@ pipeline {
 
                                         // ➤ Pick JAR from build/libs/
                                         jar = sh(
-                                            script: "find build/libs -maxdepth 1 -name '*.jar' | head -1",
+                                            script: "find . -path '*/build/libs/*.jar' | head -1",
                                             returnStdout: true
                                         ).trim()
                                     }
