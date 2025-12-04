@@ -51,16 +51,23 @@ pipeline {
                                         withMaven(maven: 'Maven-3.9.11') {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
                                         }
+
+                                        // ➤ Pick JAR from target/
+                                        jar = sh(
+                                            script: "find target -maxdepth 1 -name '*.jar' | head -1",
+                                            returnStdout: true
+                                        ).trim()
                                     }
 
                                     if (svc.type == "gradle") {
                                         sh "./gradlew clean build --quiet -PpipelineId=${RUN_ID}"
-                                    }
 
-                                    def jar = sh(
-                                        script: "find . -name '*.jar' | head -1",
-                                        returnStdout: true
-                                    ).trim()
+                                        // ➤ Pick JAR from build/libs/
+                                        jar = sh(
+                                            script: "find build/libs -maxdepth 1 -name '*.jar' | head -1",
+                                            returnStdout: true
+                                        ).trim()
+                                    }
 
                                     JAR_PATHS[svc.name] = jar
 
