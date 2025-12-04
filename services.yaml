@@ -1,13 +1,15 @@
 services:
   - name: kafka-spring-mongo
-    path: "/Users/Chandan/Documents/Personal Documents/Tech Practice/kafka-spring-mongo"
+    repo: "https://github.com/Chandan393/Kafka-Spring-Mongo.git"
+    branch: "main"
     type: maven
 
   - name: jenkins_gradle_project
-    path: "/Users/Chandan/Documents/Personal Documents/Tech Practice/jenkins_gradle_project"
+    repo: "https://github.com/Chandan393/JENKINS_GRADLE_PROJECT.git"
+    branch: "main"
     type: gradle
 
   - name: spring-cucumber-gradle
-    path: "/Users/Chandan/Documents/Personal Documents/Tech Practice/spring-cucumber-gradle"
+    repo: "https://github.com/Chandan393/Spring-Cucumber-Gradle.git"
+    branch: "main"
     type: gradle
-
