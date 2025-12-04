@@ -1,3 +1,6 @@
+def SERVICES = []
+def JAR_PATHS = [:]
+
 pipeline {
     agent any
 
@@ -9,17 +12,11 @@ pipeline {
 
         stage('Initialize') {
             steps {
-                script {
-                    // Global variables for pipeline
-                    def SERVICES = []
-                    def JAR_PATHS = [:]
-
-                    echo """
-                    ===================== PIPELINE START =====================
-                    Run ID      : ${RUN_ID}
-                    ==========================================================
-                    """
-                }
+                echo """
+                ===================== PIPELINE START =====================
+                Run ID      : ${RUN_ID}
+                ==========================================================
+                """
             }
         }
 
@@ -27,7 +24,7 @@ pipeline {
             steps {
                 script {
                     def config = readYaml file: 'services.yaml'
-                    SERVICES = config.services   // store globally
+                    SERVICES = config.services
 
                     echo """
                     Loaded Services : ${SERVICES.size()}
@@ -40,11 +37,8 @@ pipeline {
         stage('Build Services') {
             steps {
                 script {
-                    def config = readYaml file: 'services.yaml'
-                    SERVICES = config.services
 
-                    // global map to store JAR locations
-                    JAR_PATHS = [:]
+                    JAR_PATHS = [:]  // reset
 
                     def branches = SERVICES.collectEntries { svc ->
                         ["BUILD-${svc.name}": {
@@ -54,20 +48,20 @@ pipeline {
                                     echo "▶ Building ${svc.name}"
 
                                     if (svc.type == "maven") {
-                                        withMaven() {
+                                        withMaven(maven: 'Maven-3.9.9') {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
                                         }
-                                    } else if (svc.type == "gradle") {
+                                    }
+
+                                    if (svc.type == "gradle") {
                                         sh "./gradlew clean build --quiet -PpipelineId=${RUN_ID}"
                                     }
 
-                                    // find jar path
                                     def jar = sh(
                                         script: "find . -name '*.jar' | head -1",
                                         returnStdout: true
                                     ).trim()
 
-                                    // store jar path globally
                                     JAR_PATHS[svc.name] = jar
 
                                     echo "✔ Build complete: ${svc.name}"
@@ -82,11 +76,11 @@ pipeline {
         }
 
         stage('Test Services') {
+            when {
+                expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
+            }
             steps {
                 script {
-                    def config = readYaml file: 'services.yaml'
-                    SERVICES = config.services
-
                     def branches = SERVICES.collectEntries { svc ->
                         ["TEST-${svc.name}": {
                             node {
@@ -94,10 +88,12 @@ pipeline {
                                     echo "▶ Testing ${svc.name}"
 
                                     if (svc.type == "maven") {
-                                        withMaven() {
+                                        withMaven(maven: 'Maven-3.9.9') {
                                             sh "mvn -q test -Dpipeline.id=${RUN_ID}"
                                         }
-                                    } else if (svc.type == "gradle") {
+                                    }
+
+                                    if (svc.type == "gradle") {
                                         sh "./gradlew test --quiet -PpipelineId=${RUN_ID}"
                                     }
 
@@ -112,21 +108,18 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------
-         * FINAL ARTIFACT SUMMARY (ALL JARS TOGETHER)
-         * --------------------------------------------------- */
         stage('Artifacts Summary') {
+            when {
+                expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
+            }
             steps {
-                script {
-
-                    echo """
+                echo """
 ================== BUILT JAR ARTIFACTS ==================
 
 ${JAR_PATHS.collect { svc, jar -> "• ${svc} → ${jar}" }.join("\n")}
 
 ==========================================================
 """
-                }
             }
         }
 
