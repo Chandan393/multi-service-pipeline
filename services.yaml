@@ -7,6 +7,7 @@ services:
     path: "/Users/Chandan/Documents/Personal Documents/Tech Practice/jenkins_gradle_project"
     type: gradle
 
-   - name: spring-cucumber-gradle
+  - name: spring-cucumber-gradle
     path: "/Users/Chandan/Documents/Personal Documents/Tech Practice/spring-cucumber-gradle"
-    type: gradle  
+    type: gradle
+
