@@ -3,9 +3,6 @@ pipeline {
 
     stages {
 
-        /* -----------------------------
-         * LOAD CONFIG
-         * ----------------------------- */
         stage('Load Config') {
             steps {
                 script {
@@ -13,16 +10,15 @@ pipeline {
                     SERVICES = config.services
                     UNIQUE_ID = UUID.randomUUID().toString()
 
-                    echo "Loaded ${SERVICES.size()} services"
-                    echo "Pipeline Run ID: ${UNIQUE_ID}"
+                    echo "✔ Loaded ${SERVICES.size()} services"
+                    echo "✔ Pipeline Run ID: ${UNIQUE_ID}"
                 }
             }
         }
 
-        /* -----------------------------
-         * BUILD ALL SERVICES IN PARALLEL
-         * CLEAN LOGS — NO -X / --info
-         * ----------------------------- */
+        /* ---------------------------------------
+         * CLEAN BUILD (Quiet Mode)
+         * --------------------------------------- */
         stage('Build Services') {
             steps {
                 script {
@@ -31,21 +27,21 @@ pipeline {
                     SERVICES.each { svc ->
                         buildTasks[svc.name] = {
                             node {
-                                echo "Building: ${svc.name}"
 
                                 dir(svc.path) {
+                                    echo "▶ Building: ${svc.name}"
 
                                     if (svc.type == "maven") {
                                         withMaven(maven: 'Maven-3.9.11') {
-                                            sh "mvn clean package -Dpipeline.id=${UNIQUE_ID}"
+                                            sh "mvn -q clean package -Dpipeline.id=${UNIQUE_ID}"
                                         }
                                     }
 
                                     if (svc.type == "gradle") {
-                                        sh "./gradlew clean build -PpipelineId=${UNIQUE_ID}"
+                                        sh "./gradlew clean build --quiet -PpipelineId=${UNIQUE_ID}"
                                     }
 
-                                    echo "Build Completed for ${svc.name}"
+                                    echo "✔ Build completed: ${svc.name}"
                                 }
                             }
                         }
@@ -56,10 +52,9 @@ pipeline {
             }
         }
 
-        /* -----------------------------
-         * TEST ALL SERVICES IN PARALLEL
-         * KEEP DETAILED LOGS
-         * ----------------------------- */
+        /* ---------------------------------------
+         * CLEAN TEST EXECUTION (Quiet Mode)
+         * --------------------------------------- */
         stage('Test Services') {
             steps {
                 script {
@@ -68,21 +63,21 @@ pipeline {
                     SERVICES.each { svc ->
                         testTasks[svc.name + "-tests"] = {
                             node {
-                                echo "Running Tests for: ${svc.name}"
 
                                 dir(svc.path) {
+                                    echo "▶ Testing: ${svc.name}"
 
                                     if (svc.type == "maven") {
                                         withMaven(maven: 'Maven-3.9.11') {
-                                            sh "mvn test -Dpipeline.id=${UNIQUE_ID} -X"
+                                            sh "mvn -q test -Dpipeline.id=${UNIQUE_ID}"
                                         }
                                     }
 
                                     if (svc.type == "gradle") {
-                                        sh "./gradlew test -PpipelineId=${UNIQUE_ID} --info"
+                                        sh "./gradlew test --quiet -PpipelineId=${UNIQUE_ID}"
                                     }
 
-                                    echo "Tests Completed for ${svc.name}"
+                                    echo "✔ Tests completed: ${svc.name}"
                                 }
                             }
                         }
