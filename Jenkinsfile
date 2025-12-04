@@ -1,4 +1,5 @@
 def SERVICES = []
+def CHANGED_SERVICES = []
 def JAR_PATHS = [:]
 
 pipeline {
@@ -6,6 +7,7 @@ pipeline {
 
     environment {
         RUN_ID = UUID.randomUUID().toString()
+        COMMITS_DIR = "${WORKSPACE}/.last_commits"
     }
 
     stages {
@@ -17,6 +19,7 @@ pipeline {
                 Run ID      : ${RUN_ID}
                 ==========================================================
                 """
+                sh "mkdir -p ${COMMITS_DIR}"
             }
         }
 
@@ -34,16 +37,69 @@ pipeline {
             }
         }
 
+        stage('Detect Changes') {
+            steps {
+                script {
+                    CHANGED_SERVICES = []
+
+                    SERVICES.each { svc ->
+                        echo "Checking changes for ${svc.name}"
+
+                        // fresh clone
+                        sh """
+                            rm -rf tmp_${svc.name}
+                            git clone --depth 1 -b ${svc.branch} ${svc.repo} tmp_${svc.name}
+                        """
+
+                        // latest commit ID
+                        def latestCommit = sh(
+                            script: "cd tmp_${svc.name} && git rev-parse HEAD",
+                            returnStdout: true
+                        ).trim()
+
+                        def commitFile = "${COMMITS_DIR}/${svc.name}.txt"
+                        def lastCommit = fileExists(commitFile) ? readFile(commitFile).trim() : ""
+
+                        if (lastCommit != latestCommit) {
+                            echo "✔ Changes detected in ${svc.name}"
+                            CHANGED_SERVICES.add(svc)
+                        } else {
+                            echo "No changes in ${svc.name}"
+                        }
+
+                        // Save new commit
+                        writeFile(file: commitFile, text: latestCommit)
+                    }
+
+                    echo "Changed Services: ${CHANGED_SERVICES*.name}"
+
+                    // STOP PIPELINE IF NO CHANGES
+                    if (CHANGED_SERVICES.isEmpty()) {
+                        echo "No service changed → Skipping build/test/deploy → SUCCESS"
+                        currentBuild.result = "SUCCESS"
+                        return
+                    }
+                }
+            }
+        }
+
         stage('Build Services') {
+            when {
+                expression { CHANGED_SERVICES.size() > 0 }
+            }
             steps {
                 script {
 
                     JAR_PATHS = [:]  // reset
 
-                    def branches = SERVICES.collectEntries { svc ->
+                    def branches = CHANGED_SERVICES.collectEntries { svc ->
                         ["BUILD-${svc.name}": {
                             node {
-                                dir(svc.path) {
+                                dir("build_${svc.name}") {
+
+                                    // fresh clone for actual build
+                                    sh "rm -rf build_${svc.name}"
+                                    sh "git clone -b ${svc.branch} ${svc.repo} build_${svc.name}"
 
                                     echo "▶ Building ${svc.name}"
 
@@ -53,7 +109,6 @@ pipeline {
                                         withMaven(maven: 'Maven-3.9.11') {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
                                         }
-
                                         jar = sh(
                                             script: "find target -maxdepth 1 -name '*.jar' | head -1",
                                             returnStdout: true
@@ -62,7 +117,6 @@ pipeline {
 
                                     if (svc.type == "gradle") {
                                         sh "./gradlew clean build --quiet -PpipelineId=${RUN_ID}"
-
                                         jar = sh(
                                             script: "find . -path '*/build/libs/*.jar' | head -1",
                                             returnStdout: true
@@ -70,7 +124,6 @@ pipeline {
                                     }
 
                                     JAR_PATHS[svc.name] = jar
-
                                     echo "✔ Build complete: ${svc.name}"
                                 }
                             }
@@ -84,14 +137,14 @@ pipeline {
 
         stage('Test Services') {
             when {
-                expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
+                expression { CHANGED_SERVICES.size() > 0 }
             }
             steps {
                 script {
-                    def branches = SERVICES.collectEntries { svc ->
+                    def branches = CHANGED_SERVICES.collectEntries { svc ->
                         ["TEST-${svc.name}": {
                             node {
-                                dir(svc.path) {
+                                dir("build_${svc.name}") {
                                     echo "▶ Testing ${svc.name}"
 
                                     if (svc.type == "maven") {
@@ -115,23 +168,18 @@ pipeline {
             }
         }
 
-        /* -------------------------------------------------------
-         *  NEW PARALLEL DEPLOYMENT STAGE (ADDED)
-         * ------------------------------------------------------- */
         stage('Deploy Services') {
             when {
-                expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
+                expression { CHANGED_SERVICES.size() > 0 }
             }
             steps {
                 script {
-                    def branches = SERVICES.collectEntries { svc ->
+                    def branches = CHANGED_SERVICES.collectEntries { svc ->
                         ["DEPLOY-${svc.name}": {
                             node {
-
                                 echo "🚀 Deploying ${svc.name}"
                                 echo "Using JAR: ${JAR_PATHS[svc.name]}"
 
-                                // Replace this with your real deploy command
                                 sh """
                                     echo 'Deploying ${svc.name}...'
                                     echo 'Using artifact: ${JAR_PATHS[svc.name]}'
@@ -149,7 +197,7 @@ pipeline {
 
         stage('Artifacts Summary') {
             when {
-                expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
+                expression { CHANGED_SERVICES.size() > 0 }
             }
             steps {
                 echo """
