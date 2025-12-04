@@ -1,36 +1,45 @@
 pipeline {
     agent any
 
+    options {
+        timestamps()
+    }
+
     environment {
-        UNIQUE_ID = "${UUID.randomUUID().toString()}"
-        JAR_OUTPUT = ""          // Will hold final JAR locations
+        UNIQUE_ID = ""
+        JAR_OUTPUT = ""
     }
 
     stages {
 
-        /* ---------------------------------------------------
-         * LOAD YAML CONFIG
-         * --------------------------------------------------- */
+        stage('Init') {
+            steps {
+                script {
+                    UNIQUE_ID = java.util.UUID.randomUUID().toString()
+                }
+            }
+        }
+
         stage('Load Config') {
             steps {
                 script {
                     def config = readYaml file: 'services.yaml'
                     SERVICES = config.services
 
-                    echo "\n===== PIPELINE INITIALIZED ====="
-                    echo "Services Loaded : ${SERVICES.size()}"
-                    echo "Run ID          : ${UNIQUE_ID}"
-                    echo "================================\n"
+                    echo """
+===== PIPELINE INITIALIZED =====
+Services Loaded : ${SERVICES.size()}
+Run ID          : ${UNIQUE_ID}
+================================
+"""
                 }
             }
         }
 
-        /* ---------------------------------------------------
-         * CLEAN BUILD WITH QUIET LOGGING
-         * --------------------------------------------------- */
         stage('Build Services') {
             steps {
                 script {
+
                     def tasks = [:]
 
                     SERVICES.each { svc ->
@@ -46,7 +55,6 @@ pipeline {
                                             sh "mvn -q clean package -Dpipeline.id=${UNIQUE_ID}"
                                         }
 
-                                        // Capture JAR path
                                         def jar = sh(
                                             script: "ls target/*.jar | head -1",
                                             returnStdout: true
@@ -58,9 +66,8 @@ pipeline {
                                     if (svc.type == "gradle") {
                                         sh "./gradlew clean build --quiet -PpipelineId=${UNIQUE_ID}"
 
-                                        // Capture JAR path
                                         def jar = sh(
-                                            script: "ls */build/libs/*.jar */*/build/libs/*.jar 2>/dev/null | head -1",
+                                            script: "find . -type f -name '*.jar' | grep build/libs | head -1",
                                             returnStdout: true
                                         ).trim()
 
@@ -71,7 +78,6 @@ pipeline {
                                 }
                             }
                         }
-
                     }
 
                     parallel tasks
@@ -79,9 +85,6 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------
-         * CLEAN TEST EXECUTION (SHOWN ONLY WHEN FAILURE)
-         * --------------------------------------------------- */
         stage('Test Services') {
             steps {
                 script {
@@ -95,6 +98,7 @@ pipeline {
                                     echo "\n▶ TEST START: ${svc.name}\n"
 
                                     try {
+
                                         if (svc.type == "maven") {
                                             withMaven(maven: 'Maven-3.9.11') {
                                                 sh "mvn -q test -Dpipeline.id=${UNIQUE_ID}"
@@ -109,14 +113,13 @@ pipeline {
 
                                     } catch (err) {
                                         echo "✘ TEST FAILED: ${svc.name}"
-                                        echo "Showing logs (quiet mode suppressed earlier logs):"
-                                        sh "cat build/test-results/test/*.xml || true"
+                                        echo "Showing failures only:"
+                                        sh "grep -R \"<failure\" -n build/test-results/test || true"
                                         throw err
                                     }
                                 }
                             }
                         }
-
                     }
 
                     parallel tasks
@@ -124,9 +127,6 @@ pipeline {
             }
         }
 
-        /* ---------------------------------------------------
-         * FINAL SUMMARY BLOCK
-         * --------------------------------------------------- */
         stage('Summary') {
             steps {
                 script {
