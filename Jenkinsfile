@@ -7,6 +7,7 @@ pipeline {
 
     environment {
         RUN_ID = UUID.randomUUID().toString()
+        COMMITS_DIR = "${WORKSPACE}/.last_commits"
     }
 
     stages {
@@ -18,6 +19,7 @@ pipeline {
                 Run ID      : ${RUN_ID}
                 ==========================================================
                 """
+                sh "mkdir -p ${COMMITS_DIR}"
             }
         }
 
@@ -35,34 +37,47 @@ pipeline {
             }
         }
 
+        /* --------------------------------------------------------
+         * UPDATED DETECT CHANGES BLOCK (PERSISTENT last_commits)
+         * -------------------------------------------------------- */
         stage('Checkout Services') {
             steps {
                 script {
+
                     CHANGED_SERVICES = []
+                    sh "mkdir -p ${COMMITS_DIR}"
 
                     SERVICES.each { svc ->
+
                         echo "Checking changes for ${svc.name}..."
 
-                        def log = sh(
-                            script: """
-                                git ls-remote ${svc.repo} HEAD | awk '{print \$1}'
-                            """,
+                        // File where we store last commit
+                        def commitFile = "${COMMITS_DIR}/${svc.name}.txt"
+
+                        // Previously saved SHA
+                        def lastCommit = fileExists(commitFile)
+                                ? readFile(commitFile).trim()
+                                : ""
+
+                        // Get latest SHA from remote
+                        def latestCommit = sh(
+                            script: "git ls-remote ${svc.repo} ${svc.branch} | awk '{print \$1}'",
                             returnStdout: true
                         ).trim()
 
-                        if (!svc.containsKey('last_commit')) {
-                            svc.last_commit = "unknown"
+                        if (latestCommit == "") {
+                            error "❌ Cannot read latest commit of ${svc.name}"
                         }
 
-                        if (svc.last_commit != log) {
+                        if (lastCommit != latestCommit) {
                             echo "🔄 CHANGED: ${svc.name}"
-                            svc.changed = true
-                            svc.last_commit = log
                             CHANGED_SERVICES << svc
                         } else {
-                            svc.changed = false
                             echo "✔ NO CHANGE: ${svc.name}"
                         }
+
+                        // Save new commit hash
+                        writeFile file: commitFile, text: latestCommit
                     }
 
                     echo """
@@ -90,11 +105,9 @@ ${CHANGED_SERVICES*.name}
                         ["BUILD-${svc.name}": {
                             node {
 
-                                // CLEAN PREVIOUS FOLDER + CLONE OUTSIDE
                                 sh "rm -rf build_${svc.name}"
                                 sh "git clone -b ${svc.branch} ${svc.repo} build_${svc.name}"
 
-                                // ENTER CORRECT DIRECTORY
                                 dir("build_${svc.name}") {
 
                                     echo "▶ Building ${svc.name}"
@@ -183,7 +196,7 @@ ${CHANGED_SERVICES*.name}
                                 echo "🚀 Deploying ${svc.name}"
                                 echo "Using JAR: ${JAR_PATHS[svc.name]}"
 
-                                // deployment placeholder
+                                // dummy deploy
                                 sh """
                                     echo 'Deploying ${svc.name}...'
                                     echo 'Using artifact: ${JAR_PATHS[svc.name]}'
