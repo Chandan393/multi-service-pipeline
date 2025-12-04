@@ -1,3 +1,6 @@
+def SERVICES = []
+def JAR_PATHS = [:]
+
 pipeline {
     agent any
 
@@ -9,16 +12,11 @@ pipeline {
 
         stage('Initialize') {
             steps {
-                script {
-                    def SERVICES = []
-                    def JAR_OUTPUT = [:]
-
-                    echo """
-                    ===================== PIPELINE START =====================
-                    Run ID      : ${RUN_ID}
-                    ==========================================================
-                    """
-                }
+                echo """
+                ===================== PIPELINE START =====================
+                Run ID      : ${RUN_ID}
+                ==========================================================
+                """
             }
         }
 
@@ -26,11 +24,11 @@ pipeline {
             steps {
                 script {
                     def config = readYaml file: 'services.yaml'
-                    def SERVICES = config.services
+                    SERVICES = config.services
 
                     echo """
                     Loaded Services : ${SERVICES.size()}
-                    Services: ${SERVICES.join(', ')}
+                    Services: ${SERVICES*.name}
                     """
                 }
             }
@@ -39,25 +37,34 @@ pipeline {
         stage('Build Services') {
             steps {
                 script {
-                    def config = readYaml file: 'services.yaml'
-                    def SERVICES = config.services
 
-                    def branches = SERVICES.collectEntries { service ->
-                        ["BUILD-${service}": {
+                    JAR_PATHS = [:]  // reset
+
+                    def branches = SERVICES.collectEntries { svc ->
+                        ["BUILD-${svc.name}": {
                             node {
-                                dir("${service}") {
-                                    echo "▶ Building ${service}"
+                                dir(svc.path) {
 
-                                    if (fileExists('pom.xml')) {
-                                        withMaven() {
+                                    echo "▶ Building ${svc.name}"
+
+                                    if (svc.type == "maven") {
+                                        withMaven(maven: 'Maven-3.9.9') {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
                                         }
-                                    } else if (fileExists('build.gradle')) {
+                                    }
+
+                                    if (svc.type == "gradle") {
                                         sh "./gradlew clean build --quiet -PpipelineId=${RUN_ID}"
                                     }
 
-                                    sh "find . -name '*.jar' | head -1"
-                                    echo "✔ Build complete: ${service}"
+                                    def jar = sh(
+                                        script: "find . -name '*.jar' | head -1",
+                                        returnStdout: true
+                                    ).trim()
+
+                                    JAR_PATHS[svc.name] = jar
+
+                                    echo "✔ Build complete: ${svc.name}"
                                 }
                             }
                         }]
@@ -69,26 +76,28 @@ pipeline {
         }
 
         stage('Test Services') {
+            when {
+                expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
+            }
             steps {
                 script {
-                    def config = readYaml file: 'services.yaml'
-                    def SERVICES = config.services
-
-                    def branches = SERVICES.collectEntries { service ->
-                        ["TEST-${service}": {
+                    def branches = SERVICES.collectEntries { svc ->
+                        ["TEST-${svc.name}": {
                             node {
-                                dir("${service}") {
-                                    echo "▶ Testing ${service}"
+                                dir(svc.path) {
+                                    echo "▶ Testing ${svc.name}"
 
-                                    if (fileExists('pom.xml')) {
-                                        withMaven() {
+                                    if (svc.type == "maven") {
+                                        withMaven(maven: 'Maven-3.9.9') {
                                             sh "mvn -q test -Dpipeline.id=${RUN_ID}"
                                         }
-                                    } else if (fileExists('build.gradle')) {
+                                    }
+
+                                    if (svc.type == "gradle") {
                                         sh "./gradlew test --quiet -PpipelineId=${RUN_ID}"
                                     }
 
-                                    echo "✔ Tests passed: ${service}"
+                                    echo "✔ Tests passed: ${svc.name}"
                                 }
                             }
                         }]
@@ -99,11 +108,38 @@ pipeline {
             }
         }
 
+        stage('Artifacts Summary') {
+            when {
+                expression { currentBuild.resultIsBetterOrEqualTo('SUCCESS') }
+            }
+            steps {
+                echo """
+================== BUILT JAR ARTIFACTS ==================
+
+${JAR_PATHS.collect { svc, jar -> "• ${svc} → ${jar}" }.join("\n")}
+
+==========================================================
+"""
+            }
+        }
+
     } // stages
 
     post {
         always {
             echo "======================= PIPELINE END ======================="
+
+            echo """
+==================== FINAL JAR PATH SUMMARY ====================
+
+${JAR_PATHS.collect { svc, jar ->
+" SERVICE : ${svc}
+ JAR PATH: ${jar}
+"
+}.join("\n")}
+
+================================================================
+"""
         }
     }
 }
