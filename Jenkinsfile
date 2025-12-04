@@ -133,9 +133,7 @@ ${JAR_PATHS.collect { svc, jar -> "• ${svc} → ${jar}" }.join("\n")}
 ==================== FINAL JAR PATH SUMMARY ====================
 
 ${JAR_PATHS.collect { svc, jar ->
-" SERVICE : ${svc}
- JAR PATH: ${jar}
-"
+    "SERVICE : ${svc}\nJAR PATH: ${jar}\n"
 }.join("\n")}
 
 ================================================================
