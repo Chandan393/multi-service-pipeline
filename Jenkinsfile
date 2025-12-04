@@ -26,12 +26,14 @@ pipeline {
 
                                 dir(svc.path) {
 
-                                    if (svc.type == "gradle") {
-                                        sh "./gradlew clean build -PpipelineId=${UNIQUE_ID}"
+                                    if (svc.type == "maven") {
+                                        withMaven(maven: 'Maven-3.9.11') {
+                                            sh "mvn clean package -Dpipeline.id=${UNIQUE_ID}"
+                                        }
                                     }
 
-                                    if (svc.type == "maven") {
-                                        sh "mvn clean package -Dpipeline.id=${UNIQUE_ID}"
+                                    if (svc.type == "gradle") {
+                                        sh "./gradlew clean build -PpipelineId=${UNIQUE_ID}"
                                     }
 
                                     sh "echo 'Finished building ${svc.name}'"
@@ -46,4 +48,3 @@ pipeline {
         }
     }
 }
-
