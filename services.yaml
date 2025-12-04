@@ -1,0 +1,8 @@
+services:
+  - name: kafka-spring-mongo
+    path: "/Users/Chandan/Documents/Personal Documents/Tech Practice/kafka-spring-mongo"
+    type: maven
+
+  - name: jenkins_gradle_project
+    path: "/Users/Chandan/Documents/Personal Documents/Tech Practice/jenkins_gradle_project"
+    type: gradle
