@@ -28,12 +28,12 @@ pipeline {
 
                                     if (svc.type == "maven") {
                                         withMaven(maven: 'Maven-3.9.11') {
-                                            sh "mvn clean package -Dpipeline.id=${UNIQUE_ID}"
+                                            sh "mvn clean package -Dpipeline.id=${UNIQUE_ID} -X"
                                         }
                                     }
 
                                     if (svc.type == "gradle") {
-                                        sh "./gradlew clean build -PpipelineId=${UNIQUE_ID}"
+                                        sh "./gradlew clean build -PpipelineId=${UNIQUE_ID} --info"
                                     }
 
                                     sh "echo 'Finished building ${svc.name}'"
