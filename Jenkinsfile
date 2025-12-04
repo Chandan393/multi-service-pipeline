@@ -47,6 +47,8 @@ pipeline {
 
                                     echo "▶ Building ${svc.name}"
 
+                                    def jar = ""
+
                                     if (svc.type == "maven") {
                                         withMaven(maven: 'Maven-3.9.11') {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
