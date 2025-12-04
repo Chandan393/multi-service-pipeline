@@ -10,8 +10,9 @@ pipeline {
         stage('Initialize') {
             steps {
                 script {
+                    // Global variables for pipeline
                     def SERVICES = []
-                    def JAR_OUTPUT = [:]
+                    def JAR_PATHS = [:]
 
                     echo """
                     ===================== PIPELINE START =====================
@@ -26,11 +27,11 @@ pipeline {
             steps {
                 script {
                     def config = readYaml file: 'services.yaml'
-                    def SERVICES = config.services
+                    SERVICES = config.services   // store globally
 
                     echo """
                     Loaded Services : ${SERVICES.size()}
-                    Services: ${SERVICES.join(', ')}
+                    Services: ${SERVICES*.name}
                     """
                 }
             }
@@ -40,24 +41,36 @@ pipeline {
             steps {
                 script {
                     def config = readYaml file: 'services.yaml'
-                    def SERVICES = config.services
+                    SERVICES = config.services
 
-                    def branches = SERVICES.collectEntries { service ->
-                        ["BUILD-${service}": {
+                    // global map to store JAR locations
+                    JAR_PATHS = [:]
+
+                    def branches = SERVICES.collectEntries { svc ->
+                        ["BUILD-${svc.name}": {
                             node {
-                                dir("${service}") {
-                                    echo "▶ Building ${service}"
+                                dir(svc.path) {
 
-                                    if (fileExists('pom.xml')) {
+                                    echo "▶ Building ${svc.name}"
+
+                                    if (svc.type == "maven") {
                                         withMaven() {
                                             sh "mvn -q clean package -Dpipeline.id=${RUN_ID}"
                                         }
-                                    } else if (fileExists('build.gradle')) {
+                                    } else if (svc.type == "gradle") {
                                         sh "./gradlew clean build --quiet -PpipelineId=${RUN_ID}"
                                     }
 
-                                    sh "find . -name '*.jar' | head -1"
-                                    echo "✔ Build complete: ${service}"
+                                    // find jar path
+                                    def jar = sh(
+                                        script: "find . -name '*.jar' | head -1",
+                                        returnStdout: true
+                                    ).trim()
+
+                                    // store jar path globally
+                                    JAR_PATHS[svc.name] = jar
+
+                                    echo "✔ Build complete: ${svc.name}"
                                 }
                             }
                         }]
@@ -72,29 +85,47 @@ pipeline {
             steps {
                 script {
                     def config = readYaml file: 'services.yaml'
-                    def SERVICES = config.services
+                    SERVICES = config.services
 
-                    def branches = SERVICES.collectEntries { service ->
-                        ["TEST-${service}": {
+                    def branches = SERVICES.collectEntries { svc ->
+                        ["TEST-${svc.name}": {
                             node {
-                                dir("${service}") {
-                                    echo "▶ Testing ${service}"
+                                dir(svc.path) {
+                                    echo "▶ Testing ${svc.name}"
 
-                                    if (fileExists('pom.xml')) {
+                                    if (svc.type == "maven") {
                                         withMaven() {
                                             sh "mvn -q test -Dpipeline.id=${RUN_ID}"
                                         }
-                                    } else if (fileExists('build.gradle')) {
+                                    } else if (svc.type == "gradle") {
                                         sh "./gradlew test --quiet -PpipelineId=${RUN_ID}"
                                     }
 
-                                    echo "✔ Tests passed: ${service}"
+                                    echo "✔ Tests passed: ${svc.name}"
                                 }
                             }
                         }]
                     }
 
                     parallel branches
+                }
+            }
+        }
+
+        /* ---------------------------------------------------
+         * FINAL ARTIFACT SUMMARY (ALL JARS TOGETHER)
+         * --------------------------------------------------- */
+        stage('Artifacts Summary') {
+            steps {
+                script {
+
+                    echo """
+================== BUILT JAR ARTIFACTS ==================
+
+${JAR_PATHS.collect { svc, jar -> "• ${svc} → ${jar}" }.join("\n")}
+
+==========================================================
+"""
                 }
             }
         }
