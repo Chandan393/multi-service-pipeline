@@ -1,54 +1,70 @@
 pipeline {
     agent any
 
+    // ----------------------------------------------------------
+    // GLOBAL PIPELINE VARIABLES (Persist Between Stages)
+    // ----------------------------------------------------------
+    environment {
+        UNIQUE_ID = "${UUID.randomUUID().toString()}"
+    }
+
+    // Groovy shared vars (must be declared outside stages)
     options {
         timestamps()
     }
 
-    environment {
-        UNIQUE_ID = ""
-        JAR_OUTPUT = ""
-    }
-
+    // Shared objects
     stages {
 
-        stage('Init') {
+        // Declare Groovy variables outside stages
+        stage('Initialize') {
             steps {
                 script {
-                    UNIQUE_ID = java.util.UUID.randomUUID().toString()
-                }
-            }
-        }
-
-        stage('Load Config') {
-            steps {
-                script {
-                    def config = readYaml file: 'services.yaml'
-                    SERVICES = config.services
+                    // Global shared variables
+                    SERVICES = []
+                    JAR_OUTPUT = [:]   // Map: service -> jar path
 
                     echo """
-===== PIPELINE INITIALIZED =====
-Services Loaded : ${SERVICES.size()}
-Run ID          : ${UNIQUE_ID}
-================================
+===================== PIPELINE START =====================
+Run ID      : ${UNIQUE_ID}
+==========================================================
 """
                 }
             }
         }
 
+        // ----------------------------------------------------------
+        // LOAD YAML SERVICE CONFIG
+        // ----------------------------------------------------------
+        stage('Load Config') {
+            steps {
+                script {
+                    def config = readYaml(file: 'services.yaml')
+                    SERVICES = config.services
+
+                    echo """
+Loaded Services : ${SERVICES.size()}
+Services: ${SERVICES*.name.join(', ')}
+"""
+                }
+            }
+        }
+
+        // ----------------------------------------------------------
+        // PARALLEL BUILD (QUIET MODE)
+        // ----------------------------------------------------------
         stage('Build Services') {
             steps {
                 script {
 
-                    def tasks = [:]
+                    def buildTasks = SERVICES.collectEntries { svc ->
 
-                    SERVICES.each { svc ->
+                        ["BUILD-${svc.name}": {
 
-                        tasks[svc.name] = {
                             node {
                                 dir(svc.path) {
 
-                                    echo "\n▶ BUILD START: ${svc.name}\n"
+                                    echo "▶ Building ${svc.name}"
 
                                     if (svc.type == "maven") {
                                         withMaven(maven: 'Maven-3.9.11') {
@@ -60,45 +76,47 @@ Run ID          : ${UNIQUE_ID}
                                             returnStdout: true
                                         ).trim()
 
-                                        JAR_OUTPUT += "• ${svc.name}: ${jar}\n"
+                                        JAR_OUTPUT[svc.name] = jar
                                     }
 
                                     if (svc.type == "gradle") {
                                         sh "./gradlew clean build --quiet -PpipelineId=${UNIQUE_ID}"
 
                                         def jar = sh(
-                                            script: "find . -type f -name '*.jar' | grep build/libs | head -1",
+                                            script: "find build -type f -name '*.jar' | head -1",
                                             returnStdout: true
                                         ).trim()
 
-                                        JAR_OUTPUT += "• ${svc.name}: ${jar}\n"
+                                        JAR_OUTPUT[svc.name] = jar
                                     }
 
-                                    echo "✔ BUILD COMPLETE: ${svc.name}\n"
+                                    echo "✔ Build complete: ${svc.name}"
                                 }
                             }
-                        }
+                        }]
                     }
 
-                    parallel tasks
+                    parallel buildTasks
                 }
             }
         }
 
+        // ----------------------------------------------------------
+        // PARALLEL TEST (QUIET MODE, SHOW LOGS ON FAILURE)
+        // ----------------------------------------------------------
         stage('Test Services') {
             steps {
                 script {
-                    def tasks = [:]
 
-                    SERVICES.each { svc ->
+                    def testTasks = SERVICES.collectEntries { svc ->
 
-                        tasks[svc.name + "-tests"] = {
+                        ["TEST-${svc.name}": {
+
                             node {
                                 dir(svc.path) {
-                                    echo "\n▶ TEST START: ${svc.name}\n"
+                                    echo "▶ Testing ${svc.name}"
 
                                     try {
-
                                         if (svc.type == "maven") {
                                             withMaven(maven: 'Maven-3.9.11') {
                                                 sh "mvn -q test -Dpipeline.id=${UNIQUE_ID}"
@@ -109,37 +127,54 @@ Run ID          : ${UNIQUE_ID}
                                             sh "./gradlew test --quiet -PpipelineId=${UNIQUE_ID}"
                                         }
 
-                                        echo "✔ TEST PASSED: ${svc.name}\n"
+                                        echo "✔ Tests passed: ${svc.name}"
 
-                                    } catch (err) {
-                                        echo "✘ TEST FAILED: ${svc.name}"
-                                        echo "Showing failures only:"
-                                        sh "grep -R \"<failure\" -n build/test-results/test || true"
-                                        throw err
+                                    } catch (ex) {
+                                        echo "✘ Tests FAILED for ${svc.name}"
+                                        echo "Showing test failure details…"
+
+                                        sh """
+                                            echo "----- FAILED TEST OUTPUT -----"
+                                            find build/test-results -name '*.xml' -print -exec cat {} \\; || true
+                                        """
+
+                                        throw ex
                                     }
                                 }
                             }
-                        }
+                        }]
                     }
 
-                    parallel tasks
+                    parallel testTasks
                 }
             }
         }
 
+        // ----------------------------------------------------------
+        // FINAL SUMMARY (CLEAN OUTPUT)
+        // ----------------------------------------------------------
         stage('Summary') {
             steps {
                 script {
-                    echo """
-==================== PIPELINE SUMMARY ====================
 
-Run ID: ${UNIQUE_ID}
+                    def summary = """
+====================== BUILD SUMMARY ======================
 
-BUILT ARTIFACTS:
-${JAR_OUTPUT}
+Pipeline Run ID : ${UNIQUE_ID}
 
+Generated Artifacts:
+------------------------------------------------------------
+"""
+
+                    JAR_OUTPUT.each { svc, jar ->
+                        summary += "• ${svc.padRight(15)} → ${jar}\n"
+                    }
+
+                    summary += """
 ============================================================
 """
+
+                    echo summary
                 }
             }
         }
